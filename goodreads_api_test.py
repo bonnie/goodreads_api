@@ -15,8 +15,7 @@ CLASSICS_GROUP_KEYWORD = 'classic'
 def add_reviews_by_user(user_ids, ratings):
     """modify the ratings dict by adding all ratings for user_id"""
 
-    # for user_id in user_ids: # for testing
-    for user_id in user_ids[0:1]: # for testing
+    for user_id in user_ids: 
         print 'processing user', user_id
 
         # get the user object
@@ -130,13 +129,13 @@ def get_classics_users():
 
     return users
 
-def print_ratings(rating_data, outfile_name)
-    """given a ratings dict, print in a nice way"""
+def print_ratings(rating_data, outfile_name):
+    """given a ratings dict, print formatted data to file"""
 
     outfile = open(outfile_name, 'w')
 
     for isbn, data in rating_data.items():
-        outfile.write('*' * 10 + isbn + '*' * 10 + '\n'
+        outfile.write('*' * 10 + isbn + '*' * 10 + '\n')
         outfile.write('*' + data['title'] + '\n')
         for rating in data['ratings']:
             outfile.write('\t' + rating[1] + ' ' + rating[0] + '\n\n')
