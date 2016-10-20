@@ -4,7 +4,7 @@
 import os
 
 # for the goodreads api wrapper
-from goodreads import client
+from goodreads_wrapper_updates import GoodreadsClientImproved
 
 # read in the key and secret from the environment
 # (they will be there after secrets.sh is sourced)
@@ -14,5 +14,5 @@ gtoken = os.environ.get('GOODREADS_ACCESS_TOKEN')
 gtoken_secret = os.environ.get('GOODREADS_ACCESS_TOKEN_SECRET')
 
 # create goodreads client object
-gc = client.GoodreadsClient(gkey, gsecret)
+gc = GoodreadsClientImproved(gkey, gsecret)
 gc.authenticate(gtoken, gtoken_secret)
