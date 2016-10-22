@@ -12,76 +12,68 @@ from collections import OrderedDict
 CLASSICS_GROUP_KEYWORD = 'classic'
 
 ###################### functions ###############################
-def add_reviews_by_user(user_ids, ratings):
+def add_reviews_by_user(user_id, ratings):
     """modify the ratings dict by adding all ratings for user_id"""
 
-    for user_id in user_ids: 
-        print 'processing user', user_id
+    print '\t\tprocessing user', user_id
 
-        # get the user object
+    # get the user object. This doesn't work for some (deleted?) users
+    try:
         user = gc.user(user_id)
+    except Exception as e:
+        try:
+            err_string = str(e)
+        except:
+            err_string = '<no error string>'
 
-        # if the user is private, we ain't getting any reviews. Move along
-        if 'private' in user._user_dict and user._user_dict['private'] == 'true':
-            print '\tprivate, skipping...'
-            return
+        print "~~~~~~~~ ERROR: couldn't get user id", user_id, ":", err_string
+        print "~~~~~~~~ Moving on."
+        return
 
-        # page through the results, starting with page 1
-        i = 1
+    # if the user is private, we ain't getting any reviews. Move along
+    if 'private' in user._user_dict and user._user_dict['private'] == 'true':
+        print '\t\t\tprivate, skipping...'
+        return
 
-        # for debugging
-        rating_count = 0
+    # page through the results, starting with page 1
+    i = 1
 
-        # placeholder 
-        reviews = True
+    # for debugging
+    rating_count = 0
 
-        while reviews: 
+    reviews = user.get_all_reviews()
 
-            print 'review page', i
+    print "\t\t\tgot", len(reviews), "reviews"
 
-            # the goodreads python wrapper throws a KeyError (or sometimes 
-            # TypeError) if there are no reviews
-            try:
-              reviews = user.reviews(page=i)
-            except KeyError, TypeError:
-              reviews = []
+    # cycle through reviews
+    for review in reviews:
 
-            # cycle through reviews
-            for review in reviews:
+        # if the rating is 0, that means it's a text-only review. Skip. 
+        if review.rating == '0':
+            continue
 
-                # if the review is not workable by the goodreads module, skip
-                try:
-                    # if the rating is 0, that means it's a text-only review. Skip. 
-                    if review.rating == '0':
-                        continue
-                except: 
-                    continue
+        isbn = review.book['isbn']
 
-                isbn = review.book['isbn']
+        # eliminate books without an isbn
+        # isbn will be a string if it exists, otherwise an OrderedDict
+        if isinstance(isbn, OrderedDict):
+            continue
 
-                # eliminate books without an isbn
-                # isbn will be a string if it exists, otherwise an OrderedDict
-                if isinstance(isbn, OrderedDict):
-                    continue
+        # initialize if we haven't seen this book before
+        if isbn not in ratings:
+            ratings[isbn] = {'title': review.book['title'].encode('unicode-escape'),
+                             'ratings': []}
 
-                # initialize if we haven't seen this book before
-                if isbn not in ratings:
-                    ratings[isbn] = {'title': review.book['title'].encode('unicode-escape'),
-                                     'ratings': []}
+        # add this rating
+        rating_tuple = (user_id, review.rating)
+        ratings[isbn]['ratings'].append(rating_tuple)
 
-                # add this rating
-                rating_tuple = (user_id, review.rating)
-                ratings[isbn]['ratings'].append(rating_tuple)
+        rating_count += 1 # debugging
 
-                rating_count += 1 # debugging
-
-            # increment the page
-            i += 1
-        
-        print '\tfound', rating_count, 'ratings'
+    print '\t\t\tfound', rating_count, 'ratings'
 
 
-def get_classics_users():
+def process_classics_users(ratings):
 
     # to store user ids we find
     users = set()
@@ -90,44 +82,55 @@ def get_classics_users():
     groups = gc.find_groups(CLASSICS_GROUP_KEYWORD)
 
     # make sure we get all pages
-    i = 1
+    gpage = 1
 
-    # while groups:
-    while groups and i == 1: # for testing
+    while groups:
+    # while groups and gpage == 1: # for testing
 
-        print '*' * 20, 'page', i
+        print '*' * 10, 'group page', gpage
 
-        # for group_dict in groups: 
-        for group_dict in groups[0:1]:  # for testing
+        for group_dict in groups: 
+        # for group_dict in groups[0:1]:  # for testing
 
             # get actual group object
-            # group = gc.group(group_dict['id'])
-            group = gc.group(95455) # testing
+            group = gc.group(group_dict['id'])
+            # group = gc.group(95455) # testing
 
             # note: some group names are unicode (greek!) and don't translate well to ascii
-            print 'processing group', group.gid, group.title.encode('unicode-escape')
+            print '***** processing group', group.gid, group.title.encode('unicode-escape')
 
             # make sure we get all pages of members
-            members = set()
+            mpage = 1
+            member_results = True
 
-            member_page = group.members
+            while member_results:
 
-            for member in member_page:
-                
-                # need to guard against "members" come back as strings 
-                # (such as 'comment_count')
-                if isinstance(member, OrderedDict):
-                    users.add(member['user']['id']['#text'])
+                print '\tmember page', mpage
 
-                    members.add(member['user']['id']['#text'])
+                try:
+                    member_results = group.get_members(page=mpage)
+                except Exception as e:
+                    try:
+                        err_string = str(e)
+                    except:
+                        err_string = '<no error string>'
 
-            print 'found', len(members), 'members. Actual count:', group.users_count
+                    print '~~~~~~~~ ERROR: problem getting members:', err_string
+                    print "~~~~~~~~ Moving on."
+                    break
+
+                for member in member_results:
+                    user_id = member['id']['#text']
+                    if user_id not in users:
+                        add_reviews_by_user(user_id, ratings)
+                        users.add(user_id)
+
+                mpage += 1
 
         # get the next page
-        i += 1
-        groups = gc.find_groups(CLASSICS_GROUP_KEYWORD, page=i)
+        gpage += 1
+        groups = gc.find_groups(CLASSICS_GROUP_KEYWORD, page=gpage)
 
-    return users
 
 def print_ratings(rating_data, outfile_name):
     """given a ratings dict, print formatted data to file"""
@@ -136,7 +139,7 @@ def print_ratings(rating_data, outfile_name):
 
     for isbn, data in rating_data.items():
         outfile.write('*' * 10 + isbn + '*' * 10 + '\n')
-        outfile.write('*' + data['title'] + '\n')
+        outfile.write('* ' + data['title'] + '\n')
         for rating in data['ratings']:
             outfile.write('\t' + rating[1] + ' ' + rating[0] + '\n\n')
 
@@ -152,11 +155,8 @@ def print_ratings(rating_data, outfile_name):
 #           ratings (list of tuples -- user_id, rating)
 rating_data = {}
 
-# get user ids for classics groups
-user_ids = get_classics_users()
-
-# get reviews for these users
-add_reviews_by_user(user_ids, rating_data)
+# get user ids from classics groups and their reviews
+process_classics_users(rating_data)
 
 # print the results
 print_ratings(rating_data, 'ratings.txt')
