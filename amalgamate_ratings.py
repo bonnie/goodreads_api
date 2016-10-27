@@ -11,11 +11,31 @@ from collections import OrderedDict
 # keyword for user groups about classics
 CLASSICS_GROUP_KEYWORD = 'classic'
 
+# for db connection
+from model import app, db, connect_to_db, User, Book, Group, Rating
+
+# for tracking how long things take
+from datetime import datetime
+
 ###################### functions ###############################
-def add_reviews_by_user(user_id, ratings):
+def print_time():
+    now = datetime.now()
+    print "=" * 20
+    print datetime.strftime(now, '%m-%d %H:%M:%S')
+    print "=" * 20
+
+def add_reviews_by_user(user_id):
     """modify the ratings dict by adding all ratings for user_id"""
 
     print '\t\tprocessing user', user_id
+
+    # skip if the user is already in the db
+    if User.query.get(user_id):
+        print '\t\t\talready added, skipping...'
+        return
+
+    # start a user row
+    user_row = User(user_id=user_id)
 
     # get the user object. This doesn't work for some (deleted?) users
     try:
@@ -28,11 +48,18 @@ def add_reviews_by_user(user_id, ratings):
 
         print "~~~~~~~~ ERROR: couldn't get user id", user_id, ":", err_string
         print "~~~~~~~~ Moving on."
+
+        user_row.process_success = False
+        db.session.add(user_row)
         return
 
     # if the user is private, we ain't getting any reviews. Move along
     if 'private' in user._user_dict and user._user_dict['private'] == 'true':
         print '\t\t\tprivate, skipping...'
+
+        user_row.private = True
+        user_row.success = False
+        db.session.add(user_row)
         return
 
     # page through the results, starting with page 1
@@ -48,6 +75,11 @@ def add_reviews_by_user(user_id, ratings):
     # cycle through reviews
     for review in reviews:
 
+        # if we got this far, it's time to add the user
+        user_row.success = True
+        user_row.private = False
+        db.session.add(user_row)
+
         # if the rating is 0, that means it's a text-only review. Skip. 
         if review.rating == '0':
             continue
@@ -59,24 +91,29 @@ def add_reviews_by_user(user_id, ratings):
         if isinstance(isbn, OrderedDict):
             continue
 
-        # initialize if we haven't seen this book before
-        if isbn not in ratings:
-            ratings[isbn] = {'title': review.book['title'].encode('unicode-escape'),
-                             'ratings': []}
+        # add this book if we haven't seen it before
+        book = Book.query.get(isbn)
+        if not book:
+            title = review.book['title'].encode('unicode-escape')[:256]
+            book = Book(book_id=isbn, title=title)
+            db.session.add(book)
 
         # add this rating
-        rating_tuple = (user_id, review.rating)
-        ratings[isbn]['ratings'].append(rating_tuple)
+        rating = Rating(user_id=user_id, book_id=isbn, score=review.rating)
+        db.session.add(rating)
 
         rating_count += 1 # debugging
 
     print '\t\t\tfound', rating_count, 'ratings'
 
+    # commit the ratings before returning
+    db.session.commit()
 
-def process_classics_users(ratings):
 
-    # to store user ids we find
-    users = set()
+def process_classics_users():
+
+    # just to get a sense of timing
+    print_time()
 
     # get a list of groups related to our classics keyword
     groups = gc.find_groups(CLASSICS_GROUP_KEYWORD)
@@ -92,16 +129,25 @@ def process_classics_users(ratings):
         for group_dict in groups: 
         # for group_dict in groups[0:1]:  # for testing
 
+            # skip this group if its already been processed
+            if Group.query.get(group_dict['id']):
+                print '\t\t\talready added group id', group_dict['id'], ', skipping...'
+                continue
+
             # get actual group object
             group = gc.group(group_dict['id'])
             # group = gc.group(95455) # testing
 
             # note: some group names are unicode (greek!) and don't translate well to ascii
-            print '***** processing group', group.gid, group.title.encode('unicode-escape')
+            group_name = group.title.encode('unicode-escape')
+            print '***** processing group', group.gid, group_name
 
             # make sure we get all pages of members
             mpage = 1
             member_results = True
+
+            # keep track of whether it was processed successfully
+            process_success = True
 
             while member_results:
 
@@ -117,15 +163,30 @@ def process_classics_users(ratings):
 
                     print '~~~~~~~~ ERROR: problem getting members:', err_string
                     print "~~~~~~~~ Moving on."
+
+                    # record that it was not successfully processed
+                    process_success=False
                     break
 
                 for member in member_results:
                     user_id = member['id']['#text']
-                    if user_id not in users:
-                        add_reviews_by_user(user_id, ratings)
-                        users.add(user_id)
+
+                    # skip this user if already processed
+                    if User.query.get(user_id):
+                        continue
+
+                    # otherwise, add the reviews (and  add the user to the db)
+                    success = add_reviews_by_user(user_id)
 
                 mpage += 1
+
+            # we're done with this group -- put it in the db so we can skip it 
+            # if we re-process
+            group_row = Group(group_id=group.gid, 
+                              group_name=group_name, 
+                              process_success=process_success)
+            db.session.add(group_row)
+            db.session.commit()
 
         # get the next page
         gpage += 1
@@ -147,18 +208,13 @@ def print_ratings(rating_data, outfile_name):
 
 ####################### main ####################################
 
-# global dictionary to store ratings (this should be stored in db ultimately,
-# but this is a quick and dirty proof of concept...)
-# keys: isbn numbers
-# values: dict with keys
-#           book_title (string)
-#           ratings (list of tuples -- user_id, rating)
-rating_data = {}
+# establish db
+connect_to_db(app)
 
 # get user ids from classics groups and their reviews
-process_classics_users(rating_data)
+process_classics_users()
 
-# print the results
-print_ratings(rating_data, 'ratings.txt')
+# print the results to a 'ratings.txt' file
+print_ratings('ratings.txt')
 
 
